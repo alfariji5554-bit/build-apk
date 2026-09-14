@@ -32,17 +32,15 @@ jobs:
           unzip project.zip
 
       - name: Install Dependencies & Build APK
+        id: flutter_build
         run: |
           cd project_build
-          # Jika zip berisi subfolder project, masuk ke dalam folder tersebut
-          if [ -f "pubspec.yaml" ]; then
-            flutter pub get
-            flutter build apk --release
-          else
+          # Masuk ke folder jika zip berisi root folder
+          if [ ! -f "pubspec.yaml" ]; then
             cd $(ls -d */ | head -n 1)
-            flutter pub get
-            flutter build apk --release
           fi
+          flutter pub get
+          flutter build apk --release > build_log.txt 2>&1
 
       - name: Find & Send APK File to Telegram
         if: success()
@@ -55,21 +53,57 @@ jobs:
           BUILD_TIME="${{ github.event.client_payload.build_time }}"
           CHANNEL_INFO="${{ github.event.client_payload.channel_info }}"
 
-          CAPTION="🎉 *BUILD FLUTTER APK BERHASIL!*%0A━━━━━━━━━━━━━━━━━━━━━━%0A📦 *Nama Zip:* \`${ZIP_NAME}\`%0A👤 *Builder:* ${BUILDER}%0A📅 *Waktu Build:* \`${BUILD_TIME}\`%0A👨‍💻 *Developer:* @alfaxone1%0A📢 *Channel Logs:* ${CHANNEL_INFO}%0A━━━━━━━━━━━━━━━━━━━━━━%0A⚡ *Status:* APK Siap Diinstall!"
+          CAPTION="🎉 *BUILD FLUTTER APK BERHASIL!*
+━━━━━━━━━━━━━━━━━━━━━━
+📦 *Nama Zip:* \`${ZIP_NAME}\`
+👤 *Builder:* ${BUILDER}
+📅 *Waktu Build:* \`${BUILD_TIME}\`
+👨‍💻 *Developer:* @alfaxone1
+📢 *Channel Logs:* ${CHANNEL_INFO}
+━━━━━━━━━━━━━━━━━━━━━━
+⚡ *Status:* APK Siap Diinstall!"
 
-          # Send APK to User Chat
-          curl -F chat_id="${CHAT_ID}" -F document=@"${APK_PATH}" -F caption="${CAPTION}" -F parse_mode="Markdown" "https://api.telegram.org/bot${BOT_TOKEN}/sendDocument"
+          # Kirim File APK ke Pengirim
+          curl -F chat_id="${CHAT_ID}" \
+               -F document=@"${APK_PATH}" \
+               -F caption="${CAPTION}" \
+               -F parse_mode="Markdown" \
+               "https://api.telegram.org/bot${BOT_TOKEN}/sendDocument"
 
-          # Send APK to Channel Logs
-          curl -F chat_id="${CHANNEL_INFO}" -F document=@"${APK_PATH}" -F caption="${CAPTION}" -F parse_mode="Markdown" "https://api.telegram.org/bot${BOT_TOKEN}/sendDocument"
+          # Kirim File APK ke Channel Logs
+          curl -F chat_id="${CHANNEL_INFO}" \
+               -F document=@"${APK_PATH}" \
+               -F caption="${CAPTION}" \
+               -F parse_mode="Markdown" \
+               "https://api.telegram.org/bot${BOT_TOKEN}/sendDocument"
 
-      - name: Send Error Notification if Build Fails
+      - name: Send Detailed Error Log if Build Fails
         if: failure()
         run: |
           CHAT_ID="${{ github.event.client_payload.chat_id }}"
           BOT_TOKEN="${{ github.event.client_payload.bot_token }}"
+          ZIP_NAME="${{ github.event.client_payload.file_name }}"
           
+          # Cari log error dari Flutter
+          LOG_FILE=$(find project_build -name "build_log.txt" | head -n 1)
+          ERROR_DETAILS="Gagal membaca detail error log."
+          
+          if [ -f "$LOG_FILE" ]; then
+            ERROR_DETAILS=$(tail -n 25 "$LOG_FILE" | sed 's/`/'\''/g')
+          fi
+
+          FAIL_MSG="❌ *BUILD FLUTTER APK GAGAL!*
+━━━━━━━━━━━━━━━━━━━━━━
+📦 *Nama Zip:* \`${ZIP_NAME}\`
+⚠️ *Penyebab Error (Log Output):*
+
+\`\`\`
+${ERROR_DETAILS}
+\`\`\`
+━━━━━━━━━━━━━━━━━━━━━━
+💡 *Saran:* Periksa kembali file \`pubspec.yaml\` dan sintaksis kodingan Dart kamu."
+
           curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
             -d "chat_id=${CHAT_ID}" \
-            -d "text=❌ *Gagal Melakukan Kompilasi APK!* Pastikan struktur folder ZIP dan file \`pubspec.yaml\` project Flutter kamu sudah benar." \
+            -d "text=${FAIL_MSG}" \
             -d "parse_mode=Markdown"
