@@ -1,24 +1,75 @@
-name: Build Flutter APK
+name: Flutter APK Build Runner
 
 on:
-  push:
-    branches:
-      - main
-  workflow_dispatch:
+  repository_dispatch:
+    types: [build_flutter_apk]
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Checkout Repo
+        uses: actions/checkout@v3
 
-      - name: Build Flutter APK
-        uses: Dank-del/flutter-build-and-publish-action@v2
+      - name: Set up Java JDK
+        uses: actions/setup-java@v3
         with:
-          flutter-channel: stable
-          flutter-version: 3.24.3
-          java-version: 17
-          build-args: apk --release --split-per-abi
-          artifact-name: flutter-apk
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Set up Flutter Framework
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.19.x'
+          channel: 'stable'
+
+      - name: Download & Extract Project ZIP
+        run: |
+          mkdir project_build
+          cd project_build
+          curl -L -o project.zip "${{ github.event.client_payload.file_url }}"
+          unzip project.zip
+
+      - name: Install Dependencies & Build APK
+        run: |
+          cd project_build
+          # Jika zip berisi subfolder project, masuk ke dalam folder tersebut
+          if [ -f "pubspec.yaml" ]; then
+            flutter pub get
+            flutter build apk --release
+          else
+            cd $(ls -d */ | head -n 1)
+            flutter pub get
+            flutter build apk --release
+          fi
+
+      - name: Find & Send APK File to Telegram
+        if: success()
+        run: |
+          APK_PATH=$(find project_build -name "*.apk" | head -n 1)
+          CHAT_ID="${{ github.event.client_payload.chat_id }}"
+          BOT_TOKEN="${{ github.event.client_payload.bot_token }}"
+          BUILDER="${{ github.event.client_payload.builder_name }}"
+          ZIP_NAME="${{ github.event.client_payload.file_name }}"
+          BUILD_TIME="${{ github.event.client_payload.build_time }}"
+          CHANNEL_INFO="${{ github.event.client_payload.channel_info }}"
+
+          CAPTION="🎉 *BUILD FLUTTER APK BERHASIL!*%0A━━━━━━━━━━━━━━━━━━━━━━%0A📦 *Nama Zip:* \`${ZIP_NAME}\`%0A👤 *Builder:* ${BUILDER}%0A📅 *Waktu Build:* \`${BUILD_TIME}\`%0A👨‍💻 *Developer:* @alfaxone1%0A📢 *Channel Logs:* ${CHANNEL_INFO}%0A━━━━━━━━━━━━━━━━━━━━━━%0A⚡ *Status:* APK Siap Diinstall!"
+
+          # Send APK to User Chat
+          curl -F chat_id="${CHAT_ID}" -F document=@"${APK_PATH}" -F caption="${CAPTION}" -F parse_mode="Markdown" "https://api.telegram.org/bot${BOT_TOKEN}/sendDocument"
+
+          # Send APK to Channel Logs
+          curl -F chat_id="${CHANNEL_INFO}" -F document=@"${APK_PATH}" -F caption="${CAPTION}" -F parse_mode="Markdown" "https://api.telegram.org/bot${BOT_TOKEN}/sendDocument"
+
+      - name: Send Error Notification if Build Fails
+        if: failure()
+        run: |
+          CHAT_ID="${{ github.event.client_payload.chat_id }}"
+          BOT_TOKEN="${{ github.event.client_payload.bot_token }}"
+          
+          curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+            -d "chat_id=${CHAT_ID}" \
+            -d "text=❌ *Gagal Melakukan Kompilasi APK!* Pastikan struktur folder ZIP dan file \`pubspec.yaml\` project Flutter kamu sudah benar." \
+            -d "parse_mode=Markdown"
