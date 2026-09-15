@@ -18,31 +18,31 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
-      - name: Set up Flutter Framework
+      - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.19.x'
           channel: 'stable'
 
-      - name: Download & Extract Project ZIP
+      - name: Download & Extract ZIP Project
         run: |
           mkdir project_build
           cd project_build
           curl -L -o project.zip "${{ github.event.client_payload.file_url }}"
           unzip project.zip
 
-      - name: Install Dependencies & Build APK
+      - name: Build APK & Capture Log
         id: flutter_build
         run: |
           cd project_build
-          # Masuk ke folder jika zip berisi root folder
+          # Masuk ke subfolder jika zip berisi folder utama
           if [ ! -f "pubspec.yaml" ]; then
             cd $(ls -d */ | head -n 1)
           fi
           flutter pub get
-          flutter build apk --release > build_log.txt 2>&1
+          flutter build apk --release > ../build_log.txt 2>&1
 
-      - name: Find & Send APK File to Telegram
+      - name: Handle Success - Send APK & Notification
         if: success()
         run: |
           APK_PATH=$(find project_build -name "*.apk" | head -n 1)
@@ -51,59 +51,63 @@ jobs:
           BUILDER="${{ github.event.client_payload.builder_name }}"
           ZIP_NAME="${{ github.event.client_payload.file_name }}"
           BUILD_TIME="${{ github.event.client_payload.build_time }}"
-          CHANNEL_INFO="${{ github.event.client_payload.channel_info }}"
+          CHANNEL="${{ github.event.client_payload.channel_info }}"
 
           CAPTION="🎉 *BUILD FLUTTER APK BERHASIL!*
 ━━━━━━━━━━━━━━━━━━━━━━
-📦 *Nama Zip:* \`${ZIP_NAME}\`
+📦 *File:* \`${ZIP_NAME}\`
 👤 *Builder:* ${BUILDER}
-📅 *Waktu Build:* \`${BUILD_TIME}\`
-👨‍💻 *Developer:* @alfaxone1
-📢 *Channel Logs:* ${CHANNEL_INFO}
-━━━━━━━━━━━━━━━━━━━━━━
-⚡ *Status:* APK Siap Diinstall!"
+📅 *Waktu:* \`${BUILD_TIME}\`
+📢 *Channel:* ${CHANNEL}
+⚡ *Status:* Kompilasi Sukses!"
 
-          # Kirim File APK ke Pengirim
+          # 1. Kirim File APK ke Chat User
           curl -F chat_id="${CHAT_ID}" \
                -F document=@"${APK_PATH}" \
                -F caption="${CAPTION}" \
                -F parse_mode="Markdown" \
                "https://api.telegram.org/bot${BOT_TOKEN}/sendDocument"
 
-          # Kirim File APK ke Channel Logs
-          curl -F chat_id="${CHANNEL_INFO}" \
+          # 2. Kirim File APK ke Channel Logs
+          curl -F chat_id="${CHANNEL}" \
                -F document=@"${APK_PATH}" \
                -F caption="${CAPTION}" \
                -F parse_mode="Markdown" \
                "https://api.telegram.org/bot${BOT_TOKEN}/sendDocument"
 
-      - name: Send Detailed Error Log if Build Fails
+      - name: Handle Error - Create TXT & Send Error Logs
         if: failure()
         run: |
           CHAT_ID="${{ github.event.client_payload.chat_id }}"
           BOT_TOKEN="${{ github.event.client_payload.bot_token }}"
           ZIP_NAME="${{ github.event.client_payload.file_name }}"
-          
-          # Cari log error dari Flutter
-          LOG_FILE=$(find project_build -name "build_log.txt" | head -n 1)
-          ERROR_DETAILS="Gagal membaca detail error log."
-          
-          if [ -f "$LOG_FILE" ]; then
-            ERROR_DETAILS=$(tail -n 25 "$LOG_FILE" | sed 's/`/'\''/g')
-          fi
+          BUILDER="${{ github.event.client_payload.builder_name }}"
+          CHANNEL="${{ github.event.client_payload.channel_info }}"
 
-          FAIL_MSG="❌ *BUILD FLUTTER APK GAGAL!*
+          # Buat File TXT Error Log lengkap
+          echo "=== BUILD ERROR LOG FOR ${ZIP_NAME} ===" > error_report.txt
+          echo "Builder: ${BUILDER}" >> error_report.txt
+          echo "Date: $(date)" >> error_report.txt
+          echo "=======================================" >> error_report.txt
+          echo "" >> error_report.txt
+          cat build_log.txt >> error_report.txt
+
+          CAPTION_ERR="❌ *BUILD FLUTTER APK GAGAL!*
 ━━━━━━━━━━━━━━━━━━━━━━
-📦 *Nama Zip:* \`${ZIP_NAME}\`
-⚠️ *Penyebab Error (Log Output):*
+📦 *File:* \`${ZIP_NAME}\`
+👤 *Builder:* ${BUILDER}
+⚠️ *Detail Error:* Terlampir pada file \`build_error_log.txt\` di bawah ini. Silakan periksa kodingan Flutter kamu."
 
-\`\`\`
-${ERROR_DETAILS}
-\`\`\`
-━━━━━━━━━━━━━━━━━━━━━━
-💡 *Saran:* Periksa kembali file \`pubspec.yaml\` dan sintaksis kodingan Dart kamu."
+          # 1. Kirim File TXT Error ke User
+          curl -F chat_id="${CHAT_ID}" \
+               -F document=@"error_report.txt;filename=build_error_log.txt" \
+               -F caption="${CAPTION_ERR}" \
+               -F parse_mode="Markdown" \
+               "https://api.telegram.org/bot${BOT_TOKEN}/sendDocument"
 
-          curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
-            -d "chat_id=${CHAT_ID}" \
-            -d "text=${FAIL_MSG}" \
-            -d "parse_mode=Markdown"
+          # 2. Kirim Notifikasi & File TXT Error ke Channel Logs
+          curl -F chat_id="${CHANNEL}" \
+               -F document=@"error_report.txt;filename=build_error_log.txt" \
+               -F caption="${CAPTION_ERR}" \
+               -F parse_mode="Markdown" \
+               "https://api.telegram.org/bot${BOT_TOKEN}/sendDocument"
