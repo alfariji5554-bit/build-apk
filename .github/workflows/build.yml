@@ -1,4 +1,4 @@
-name: Flutter APK Build Runner
+name: Flutter APK Builder Engine
 
 on:
   repository_dispatch:
@@ -7,178 +7,83 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout Repo
-        uses: actions/checkout@v3
-
-      # STEP 3: UPDATE STATUS TELEGRAM (Download & Ekstrak)
-      - name: Update Status - Downloading & Extracting
+      # STEP 1: INISIALISASI & NOTIFIKASI STEP 2
+      - name: Update Status Telegram (Step 2 - Download Project)
         run: |
-          CHAT_ID="${{ github.event.client_payload.chat_id }}"
-          BOT_TOKEN="${{ github.event.client_payload.bot_token }}"
-          MSG_ID="${{ github.event.client_payload.msg_id }}"
-          ZIP_NAME="${{ github.event.client_payload.file_name }}"
-          BUILDER="${{ github.event.client_payload.builder_name }}"
+          curl -s -X POST "https://api.telegram.org/bot${{ github.event.client_payload.bot_token }}/editMessageCaption" \
+            -d "chat_id=${{ github.event.client_payload.chat_id }}" \
+            -d "message_id=${{ github.event.client_payload.msg_id }}" \
+            -d "caption=⏳ *LIVE BUILDER FLUTTER*%0A━━━━━━━━━━━━━━━━━━━━━━%0A📦 *File:* \`${{ github.event.client_payload.file_name }}\`%0A👤 *Builder:* ${{ github.event.client_payload.builder_name }}%0A🔄 *Status:* \`[2/5] 📥 Mengunduh & Mengekstrak Zip Project...\`&parse_mode=Markdown"
 
-          TEXT="⏳ *LIVE BUILDER FLUTTER*
-  ━━━━━━━━━━━━━━━━━━━━━━
-  📦 *File:* \`${ZIP_NAME}\`
-  👤 *Builder:* ${BUILDER}
-  🔄 *Status:* \`[3/5] 📥 Mengunduh & Mengekstrak File ZIP...\`
-  _Engine sedang menyiapkan struktur folder project Flutter..._"
+      # STEP 2: SETUP FLUTTER ENVIRONMENT
+      - name: Update Status Telegram (Step 3 - Setup Flutter Engine)
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${{ github.event.client_payload.bot_token }}/editMessageCaption" \
+            -d "chat_id=${{ github.event.client_payload.chat_id }}" \
+            -d "message_id=${{ github.event.client_payload.msg_id }}" \
+            -d "caption=⏳ *LIVE BUILDER FLUTTER*%0A━━━━━━━━━━━━━━━━━━━━━━%0A📦 *File:* \`${{ github.event.client_payload.file_name }}\`%0A👤 *Builder:* ${{ github.event.client_payload.builder_name }}%0A🔄 *Status:* \`[3/5] ⚙️ Menginstall SDK Flutter & Dependencies...\`&parse_mode=Markdown"
 
-          curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/editMessageText" \
-            -d "chat_id=${CHAT_ID}" \
-            -d "message_id=${MSG_ID}" \
-            -d "text=${TEXT}" \
-            -d "parse_mode=Markdown"
-
-      - name: Set up Java JDK
+      - name: Setup Java JDK
         uses: actions/setup-java@v3
         with:
           distribution: 'zulu'
           java-version: '17'
 
-      - name: Set up Flutter
+      - name: Setup Flutter SDK
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.19.x'
           channel: 'stable'
 
-      - name: Download & Extract ZIP
+      - name: Download & Extract Project ZIP
         run: |
-          mkdir project_build
-          cd project_build
+          mkdir project
+          cd project
           curl -L -o project.zip "${{ github.event.client_payload.file_url }}"
           unzip project.zip
 
-      # STEP 4: UPDATE STATUS TELEGRAM (Compiling Flutter APK)
-      - name: Update Status - Compiling APK
+      # STEP 3: PROSES BUILD APK
+      - name: Update Status Telegram (Step 4 - Compiling APK)
         run: |
-          CHAT_ID="${{ github.event.client_payload.chat_id }}"
-          BOT_TOKEN="${{ github.event.client_payload.bot_token }}"
-          MSG_ID="${{ github.event.client_payload.msg_id }}"
-          ZIP_NAME="${{ github.event.client_payload.file_name }}"
-          BUILDER="${{ github.event.client_payload.builder_name }}"
+          curl -s -X POST "https://api.telegram.org/bot${{ github.event.client_payload.bot_token }}/editMessageCaption" \
+            -d "chat_id=${{ github.event.client_payload.chat_id }}" \
+            -d "message_id=${{ github.event.client_payload.msg_id }}" \
+            -d "caption=⏳ *LIVE BUILDER FLUTTER*%0A━━━━━━━━━━━━━━━━━━━━━━%0A📦 *File:* \`${{ github.event.client_payload.file_name }}\`%0A👤 *Builder:* ${{ github.event.client_payload.builder_name }}%0A🔄 *Status:* \`[4/5] 🔨 Membangun APK (Flutter Build APK --release)...\`&parse_mode=Markdown"
 
-          TEXT="⏳ *LIVE BUILDER FLUTTER*
-  ━━━━━━━━━━━━━━━━━━━━━━
-  📦 *File:* \`${ZIP_NAME}\`
-  👤 *Builder:* ${BUILDER}
-  🔄 *Status:* \`[4/5] ⚙️ Mengompilasi Project Flutter ke APK...\`
-  _Menjalankan flutter pub get & flutter build apk --release (Proses memakan waktu 2-4 menit)..._"
-
-          curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/editMessageText" \
-            -d "chat_id=${CHAT_ID}" \
-            -d "message_id=${MSG_ID}" \
-            -d "text=${TEXT}" \
-            -d "parse_mode=Markdown"
-
-      - name: Build APK & Capture Log
-        id: flutter_build
+      - name: Build Flutter Release APK
         run: |
-          cd project_build
+          cd project
+          # Jika zip berisi subfolder, masuk ke folder project utama
           if [ ! -f "pubspec.yaml" ]; then
             cd $(ls -d */ | head -n 1)
           fi
           flutter pub get
-          flutter build apk --release > ../build_log.txt 2>&1
+          flutter build apk --release
 
-      # STEP 5: IF SUCCESS - UPDATE STATUS & SEND APK
-      - name: Handle Success
+      # STEP 4: CARI HASIL APK DAN KIRIM KE USER VIA TELEGRAM
+      - name: Send Built APK to Telegram
         if: success()
         run: |
-          CHAT_ID="${{ github.event.client_payload.chat_id }}"
-          BOT_TOKEN="${{ github.event.client_payload.bot_token }}"
-          MSG_ID="${{ github.event.client_payload.msg_id }}"
-          BUILDER="${{ github.event.client_payload.builder_name }}"
-          ZIP_NAME="${{ github.event.client_payload.file_name }}"
-          BUILD_TIME="${{ github.event.client_payload.build_time }}"
-          CHANNEL="${{ github.event.client_payload.channel_info }}"
-          APK_PATH=$(find project_build -name "*.apk" | head -n 1)
+          APK_PATH=$(find project/ -name "*.apk" | head -n 1)
+          
+          # Update Status Step 5 (Selesai)
+          curl -s -X POST "https://api.telegram.org/bot${{ github.event.client_payload.bot_token }}/editMessageCaption" \
+            -d "chat_id=${{ github.event.client_payload.chat_id }}" \
+            -d "message_id=${{ github.event.client_payload.msg_id }}" \
+            -d "caption=🎉 *BUILD APK SUCCESS COMPLETE!*%0A━━━━━━━━━━━━━━━━━━━━━━%0A📦 *File Original:* \`${{ github.event.client_payload.file_name }}\`%0A👤 *Builder:* ${{ github.event.client_payload.builder_name }}%0A✅ *Status:* \`[5/5] 🚀 Kompilasi Selesai! Mengirimkan file APK...\`&parse_mode=Markdown"
 
-          TEXT="🎉 *LIVE BUILDER FLUTTER*
-  ━━━━━━━━━━━━━━━━━━━━━━
-  📦 *File:* \`${ZIP_NAME}\`
-  👤 *Builder:* ${BUILDER}
-  🔄 *Status:* \`[5/5] 🟢 Kompilasi Berhasil! Mengirim APK...\``
-
-          curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/editMessageText" \
-            -d "chat_id=${CHAT_ID}" \
-            -d "message_id=${MSG_ID}" \
-            -d "text=${TEXT}" \
-            -d "parse_mode=Markdown"
-
-          CAPTION="🎉 *BUILD FLUTTER APK BERHASIL!*
-  ━━━━━━━━━━━━━━━━━━━━━━
-  📦 *File:* \`${ZIP_NAME}\`
-  👤 *Builder:* ${BUILDER}
-  📅 *Waktu:* \`${BUILD_TIME}\`
-  📢 *Channel:* ${CHANNEL}
-  ⚡ *Status:* APK Siap Diinstall!"
-
-          # Kirim File APK ke User
-          curl -F chat_id="${CHAT_ID}" \
-               -F document=@"${APK_PATH}" \
-               -F caption="${CAPTION}" \
+          # Kirim File APK Hasil Kompilasi
+          curl -F chat_id="${{ github.event.client_payload.chat_id }}" \
+               -F document=@"$APK_PATH" \
+               -F caption="✅ *APK BERHASIL DIBUILD!*%0A Silakan unduh dan install file APK di atas." \
                -F parse_mode="Markdown" \
-               "https://api.telegram.org/bot${BOT_TOKEN}/sendDocument"
+               "https://api.telegram.org/bot${{ github.event.client_payload.bot_token }}/sendDocument"
 
-          # Kirim File APK ke Channel Logs
-          curl -F chat_id="${CHANNEL}" \
-               -F document=@"${APK_PATH}" \
-               -F caption="${CAPTION}" \
-               -F parse_mode="Markdown" \
-               "https://api.telegram.org/bot${BOT_TOKEN}/sendDocument"
-
-      # STEP ERROR: IF FAILED - UPDATE STATUS & SEND TXT LOG
-      - name: Handle Error
+      # JIKA PROSES BUILD EROR / GAGAL
+      - name: Notify Build Failure
         if: failure()
         run: |
-          CHAT_ID="${{ github.event.client_payload.chat_id }}"
-          BOT_TOKEN="${{ github.event.client_payload.bot_token }}"
-          MSG_ID="${{ github.event.client_payload.msg_id }}"
-          ZIP_NAME="${{ github.event.client_payload.file_name }}"
-          BUILDER="${{ github.event.client_payload.builder_name }}"
-          CHANNEL="${{ github.event.client_payload.channel_info }}"
-
-          # Buat File TXT Error
-          echo "=== BUILD ERROR LOG FOR ${ZIP_NAME} ===" > error_report.txt
-          echo "Builder: ${BUILDER}" >> error_report.txt
-          echo "Date: $(date)" >> error_report.txt
-          echo "=======================================" >> error_report.txt
-          echo "" >> error_report.txt
-          cat build_log.txt >> error_report.txt
-
-          TEXT="❌ *LIVE BUILDER FLUTTER*
-  ━━━━━━━━━━━━━━━━━━━━━━
-  📦 *File:* \`${ZIP_NAME}\`
-  👤 *Builder:* ${BUILDER}
-  🔄 *Status:* \`[ERROR] 🔴 Kompilasi Gagal! Memunculkan Log Error...\``
-
-          curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/editMessageText" \
-            -d "chat_id=${CHAT_ID}" \
-            -d "message_id=${MSG_ID}" \
-            -d "text=${TEXT}" \
+          curl -s -X POST "https://api.telegram.org/bot${{ github.event.client_payload.bot_token }}/sendMessage" \
+            -d "chat_id=${{ github.event.client_payload.chat_id }}" \
+            -d "text=❌ *BUILD APK GAGAL!*%0A━━━━━━━━━━━━━━━━━━━━━━%0A Terjadi kesalahan sintaks/kompilasi dalam kode Flutter kamu.%0A%0A💡 *Solusi:* Gunakan perintah \`/fix <log_error>\` di bot ini untuk bantuan perbaikan AI." \
             -d "parse_mode=Markdown"
-
-          CAPTION_ERR="❌ *BUILD FLUTTER APK GAGAL!*
-  ━━━━━━━━━━━━━━━━━━━━━━
-  📦 *File:* \`${ZIP_NAME}\`
-  👤 *Builder:* ${BUILDER}
-  ⚠️ *Detail Error:* Terlampir pada file \`build_error_log.txt\` di bawah. Silakan periksa kodingan Flutter kamu."
-
-          # Kirim Log TXT ke User
-          curl -F chat_id="${CHAT_ID}" \
-               -F document=@"error_report.txt;filename=build_error_log.txt" \
-               -F caption="${CAPTION_ERR}" \
-               -F parse_mode="Markdown" \
-               "https://api.telegram.org/bot${BOT_TOKEN}/sendDocument"
-
-          # Kirim Log TXT ke Channel Logs
-          curl -F chat_id="${CHANNEL}" \
-               -F document=@"error_report.txt;filename=build_error_log.txt" \
-               -F caption="${CAPTION_ERR}" \
-               -F parse_mode="Markdown" \
-               "https://api.telegram.org/bot${BOT_TOKEN}/sendDocument"
