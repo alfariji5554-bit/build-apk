@@ -1,34 +1,22 @@
-# --- .github/workflows/flutter-build.yml ---
-# Letakkan file ini di repo GitHub build service kamu
-# di path: .github/workflows/flutter-build.yml
-#
-# Setup GitHub Secrets di repo ini:
-# BOT_TOKEN → token bot Telegram kamu
-
-name: Flutter Build Service
+name: Flutter Build ${{ github.event.inputs.build_id }}
 
 on:
   workflow_dispatch:
     inputs:
       repo_url:
-        description: 'GitHub Repository URL'
+        description: 'URL GitHub repo Flutter'
         required: true
-        type: string
+        default: 'https://github.com/username/repo'
       build_type:
-        description: 'apk-release / apk-debug / web'
+        description: 'apk-release | apk-debug | web'
         required: true
-        type: string
         default: 'apk-release'
       user_id:
-        description: 'Telegram User ID'
+        description: 'Telegram user ID'
         required: true
-        type: string
       build_id:
-        description: 'Unique Build ID'
+        description: 'Build ID dari bot'
         required: true
-        type: string
-
-run-name: "${{ github.event.inputs.build_id }}"
 
 jobs:
   build:
@@ -36,143 +24,83 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - name: Notify — Build Started
-        run: |
-          curl -s -X POST "https://api.telegram.org/bot${{ secrets.BOT_TOKEN }}/sendMessage" \
-            -H "Content-Type: application/json" \
-            -d '{
-              "chat_id": "${{ github.event.inputs.user_id }}",
-              "text": "⚡ *GITHUB ACTIONS AKTIF*\n\n🔑 ID: `${{ github.event.inputs.build_id }}`\n🏷️ Tipe: `${{ github.event.inputs.build_type }}`\n\n_Mengclone repository..._",
-              "parse_mode": "Markdown"
-            }' || true
+      - name: Checkout build repo
+        uses: actions/checkout@v4
 
-      - name: Setup Java 17
-        uses: actions/setup-java@v3
+      - name: Clone user repo
+        run: |
+          git clone --depth=1 ${{ github.event.inputs.repo_url }} user_project
+          echo "✅ Repo cloned: ${{ github.event.inputs.repo_url }}"
+
+      - name: Setup Java (APK only)
+        if: ${{ github.event.inputs.build_type != 'web' }}
+        uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
           java-version: '17'
 
-      - name: Setup Flutter Stable
+      - name: Setup Flutter (stable)
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
           cache: true
 
-      - name: Clone User Repository
-        id: clone
-        run: |
-          git clone --depth=1 "${{ github.event.inputs.repo_url }}" ./project 2>&1 | tee /tmp/clone_log.txt
-          if [ ! -d "./project" ]; then
-            echo "CLONE_FAILED=true" >> $GITHUB_ENV
-            exit 1
-          fi
-          echo "✅ Clone berhasil"
+      - name: Flutter version info
+        run: flutter --version
 
-      - name: Validate Flutter Project
-        working-directory: ./project
-        run: |
-          if [ ! -f "pubspec.yaml" ]; then
-            echo "ERROR: pubspec.yaml tidak ditemukan. Bukan Flutter project." | tee /tmp/build_error.txt
-            exit 1
-          fi
-          flutter --version
-          echo "✅ Flutter project valid"
+      - name: Get dependencies
+        working-directory: user_project
+        run: flutter pub get
 
-      - name: Get Dependencies
-        working-directory: ./project
-        run: flutter pub get 2>&1 | tee -a /tmp/build_log.txt
-
-      - name: Notify — Building
-        run: |
-          curl -s -X POST "https://api.telegram.org/bot${{ secrets.BOT_TOKEN }}/sendMessage" \
-            -H "Content-Type: application/json" \
-            -d '{
-              "chat_id": "${{ github.event.inputs.user_id }}",
-              "text": "🔨 *BUILD BERJALAN...*\n\n🏷️ Tipe: `${{ github.event.inputs.build_type }}`\n\n_Kompilasi sedang berjalan, harap tunggu..._",
-              "parse_mode": "Markdown"
-            }' || true
+      - name: Analyze (non-fatal)
+        working-directory: user_project
+        run: flutter analyze --no-fatal-warnings || true
 
       - name: Build APK Release
-        if: github.event.inputs.build_type == 'apk-release'
-        working-directory: ./project
-        run: |
-          flutter build apk --release --verbose 2>&1 | tee -a /tmp/build_log.txt
-          echo "ARTIFACT_PATH=build/app/outputs/flutter-apk/app-release.apk" >> $GITHUB_ENV
-          echo "ARTIFACT_NAME=app-release-${{ github.event.inputs.build_id }}.apk" >> $GITHUB_ENV
+        if: ${{ github.event.inputs.build_type == 'apk-release' }}
+        working-directory: user_project
+        run: flutter build apk --release --no-tree-shake-icons
 
-      - name: Build APK Debug
-        if: github.event.inputs.build_type == 'apk-debug'
-        working-directory: ./project
-        run: |
-          flutter build apk --debug --verbose 2>&1 | tee -a /tmp/build_log.txt
-          echo "ARTIFACT_PATH=build/app/outputs/flutter-apk/app-debug.apk" >> $GITHUB_ENV
-          echo "ARTIFACT_NAME=app-debug-${{ github.event.inputs.build_id }}.apk" >> $GITHUB_ENV
-
-      - name: Build Web
-        if: github.event.inputs.build_type == 'web'
-        working-directory: ./project
-        run: |
-          flutter build web --release --verbose 2>&1 | tee -a /tmp/build_log.txt
-          cd build/web && zip -r ../../web-build.zip . && cd ../..
-          echo "ARTIFACT_PATH=web-build.zip" >> $GITHUB_ENV
-          echo "ARTIFACT_NAME=web-${{ github.event.inputs.build_id }}.zip" >> $GITHUB_ENV
-
-      - name: Verify Output Exists
-        working-directory: ./project
-        run: |
-          if [ ! -f "${{ env.ARTIFACT_PATH }}" ]; then
-            echo "ERROR: File output tidak ditemukan: ${{ env.ARTIFACT_PATH }}" | tee /tmp/build_error.txt
-            exit 1
-          fi
-          BUILD_SIZE=$(du -sh "${{ env.ARTIFACT_PATH }}" | cut -f1)
-          echo "BUILD_SIZE=${BUILD_SIZE}" >> $GITHUB_ENV
-          echo "✅ Output: ${{ env.ARTIFACT_PATH }} (${BUILD_SIZE})"
-
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v3
+      - name: Upload APK Release
+        if: ${{ github.event.inputs.build_type == 'apk-release' }}
+        uses: actions/upload-artifact@v4
         with:
-          name: "${{ env.ARTIFACT_NAME }}"
-          path: "./project/${{ env.ARTIFACT_PATH }}"
-          retention-days: 7
+          name: APK-Release-${{ github.event.inputs.build_id }}
+          path: user_project/build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 3
           if-no-files-found: error
 
-      - name: Notify — Success
-        if: success()
+      - name: Build APK Debug
+        if: ${{ github.event.inputs.build_type == 'apk-debug' }}
+        working-directory: user_project
+        run: flutter build apk --debug
+
+      - name: Upload APK Debug
+        if: ${{ github.event.inputs.build_type == 'apk-debug' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: APK-Debug-${{ github.event.inputs.build_id }}
+          path: user_project/build/app/outputs/flutter-apk/app-debug.apk
+          retention-days: 3
+          if-no-files-found: error
+
+      - name: Build Web
+        if: ${{ github.event.inputs.build_type == 'web' }}
+        working-directory: user_project
+        run: flutter build web --release --web-renderer canvaskit
+
+      - name: Zip web build
+        if: ${{ github.event.inputs.build_type == 'web' }}
+        working-directory: user_project
         run: |
-          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          curl -s -X POST "https://api.telegram.org/bot${{ secrets.BOT_TOKEN }}/sendMessage" \
-            -H "Content-Type: application/json" \
-            -d "{
-              \"chat_id\": \"${{ github.event.inputs.user_id }}\",
-              \"text\": \"✅ *BUILD BERHASIL!* 🎉\n\n🏷️ Tipe: \`${{ github.event.inputs.build_type }}\`\n📁 File: \`${{ env.ARTIFACT_NAME }}\`\n💾 Ukuran: ${{ env.BUILD_SIZE }}\n\n📥 *Download Artifact:*\n${RUN_URL}\n\n_Login GitHub untuk download. Tersedia 7 hari._\",
-              \"parse_mode\": \"Markdown\",
-              \"disable_web_page_preview\": true
-            }" || true
+          cd build/web
+          zip -r ../../web-build.zip .
 
-      - name: Collect Error Log on Failure
-        if: failure()
-        run: |
-          LOG=""
-          if [ -f "/tmp/build_log.txt" ]; then
-            LOG=$(grep -E "(error:|ERROR|FAILED|Exception|✗)" /tmp/build_log.txt | tail -40)
-            if [ -z "$LOG" ]; then
-              LOG=$(tail -60 /tmp/build_log.txt)
-            fi
-          fi
-          if [ -f "/tmp/build_error.txt" ]; then
-            LOG=$(cat /tmp/build_error.txt)
-          fi
-          LOG=$(echo "$LOG" | head -c 3000)
-          if [ -z "$LOG" ]; then LOG="Tidak ada log. Cek GitHub Actions untuk detail."; fi
-
-          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          ESCAPED_LOG=$(python3 -c "import sys,json; s=sys.stdin.read(); print(json.dumps(s)[1:-1])" <<< "$LOG")
-
-          curl -s -X POST "https://api.telegram.org/bot${{ secrets.BOT_TOKEN }}/sendMessage" \
-            -H "Content-Type: application/json" \
-            -d "{
-              \"chat_id\": \"${{ github.event.inputs.user_id }}\",
-              \"text\": \"❌ *BUILD GAGAL*\n\n🏷️ Tipe: \`${{ github.event.inputs.build_type }}\`\n📂 Repo: ${{ github.event.inputs.repo_url }}\n\n📋 *LOG ERROR LENGKAP:*\n\`\`\`\n${ESCAPED_LOG}\n\`\`\`\n\n🔗 [Detail di GitHub](${RUN_URL})\",
-              \"parse_mode\": \"Markdown\",
-              \"disable_web_page_preview\": true
-            }" || true
+      - name: Upload Web Build
+        if: ${{ github.event.inputs.build_type == 'web' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: Web-Build-${{ github.event.inputs.build_id }}
+          path: user_project/web-build.zip
+          retention-days: 3
+          if-no-files-found: error
