@@ -3,10 +3,9 @@ name: Flutter Build ${{ github.event.inputs.build_id }}
 on:
   workflow_dispatch:
     inputs:
-      repo_url:
-        description: 'URL GitHub repo Flutter'
+      zip_path:
+        description: 'Path ZIP di repo (uploads/userId_buildId.zip)'
         required: true
-        default: 'https://github.com/username/repo'
       build_type:
         description: 'apk-release | apk-debug | web'
         required: true
@@ -27,10 +26,32 @@ jobs:
       - name: Checkout build repo
         uses: actions/checkout@v4
 
-      - name: Clone user repo
+      - name: Extract Flutter project from ZIP
         run: |
-          git clone --depth=1 ${{ github.event.inputs.repo_url }} user_project
-          echo "✅ Repo cloned: ${{ github.event.inputs.repo_url }}"
+          ZIP="${{ github.event.inputs.zip_path }}"
+
+          if [ ! -f "$ZIP" ]; then
+            echo "❌ File ZIP tidak ditemukan: $ZIP"
+            ls uploads/ || echo "(folder uploads kosong)"
+            exit 1
+          fi
+
+          mkdir -p user_project_raw
+          unzip -q "$ZIP" -d user_project_raw
+          echo "✅ ZIP diekstrak"
+
+          # Cari Flutter project root (ada pubspec.yaml)
+          FLUTTER_ROOT=$(find user_project_raw -name "pubspec.yaml" -maxdepth 5 | head -1 | xargs dirname 2>/dev/null)
+
+          if [ -z "$FLUTTER_ROOT" ]; then
+            echo "❌ pubspec.yaml tidak ditemukan! Pastikan project Flutter valid."
+            find user_project_raw -maxdepth 4 | head -30
+            exit 1
+          fi
+
+          echo "✅ Flutter root: $FLUTTER_ROOT"
+          cp -r "$FLUTTER_ROOT/." user_project/
+          ls user_project/
 
       - name: Setup Java (APK only)
         if: ${{ github.event.inputs.build_type != 'web' }}
@@ -45,7 +66,7 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: Flutter version info
+      - name: Flutter version
         run: flutter --version
 
       - name: Get dependencies
@@ -56,6 +77,7 @@ jobs:
         working-directory: user_project
         run: flutter analyze --no-fatal-warnings || true
 
+      # ── APK RELEASE ───────────────────────────────────────
       - name: Build APK Release
         if: ${{ github.event.inputs.build_type == 'apk-release' }}
         working-directory: user_project
@@ -70,6 +92,7 @@ jobs:
           retention-days: 3
           if-no-files-found: error
 
+      # ── APK DEBUG ─────────────────────────────────────────
       - name: Build APK Debug
         if: ${{ github.event.inputs.build_type == 'apk-debug' }}
         working-directory: user_project
@@ -84,12 +107,13 @@ jobs:
           retention-days: 3
           if-no-files-found: error
 
+      # ── WEB ───────────────────────────────────────────────
       - name: Build Web
         if: ${{ github.event.inputs.build_type == 'web' }}
         working-directory: user_project
         run: flutter build web --release --web-renderer canvaskit
 
-      - name: Zip web build
+      - name: Zip web output
         if: ${{ github.event.inputs.build_type == 'web' }}
         working-directory: user_project
         run: |
@@ -104,3 +128,8 @@ jobs:
           path: user_project/web-build.zip
           retention-days: 3
           if-no-files-found: error
+
+      # ── CLEANUP ───────────────────────────────────────────
+      - name: Cleanup raw extract
+        if: always()
+        run: rm -rf user_project_raw || true
