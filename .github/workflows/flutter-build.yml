@@ -83,7 +83,7 @@ jobs:
       - name: Build APK Release
         if: ${{ inputs.build_type == 'apk-release' }}
         working-directory: user_project
-        run: flutter build apk --release --no-tree-shake-icons
+        run: flutter build apk --release --no-tree-shake-icons --verbose
 
       - name: Upload APK Release
         if: ${{ inputs.build_type == 'apk-release' }}
@@ -98,7 +98,7 @@ jobs:
       - name: Build APK Debug
         if: ${{ inputs.build_type == 'apk-debug' }}
         working-directory: user_project
-        run: flutter build apk --debug
+        run: flutter build apk --debug --verbose
 
       - name: Upload APK Debug
         if: ${{ inputs.build_type == 'apk-debug' }}
@@ -113,7 +113,7 @@ jobs:
       - name: Build Web
         if: ${{ inputs.build_type == 'web' }}
         working-directory: user_project
-        run: flutter build web --release --web-renderer canvaskit
+        run: flutter build web --release --verbose
 
       - name: Zip web output
         if: ${{ inputs.build_type == 'web' }}
