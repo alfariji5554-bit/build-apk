@@ -1,10 +1,11 @@
-name: Flutter Build ${{ github.event.inputs.build_id }}
+name: Flutter Build Bot
+run-name: "Build ${{ inputs.build_id }}"
 
 on:
   workflow_dispatch:
     inputs:
       zip_path:
-        description: 'Path ZIP di repo (uploads/userId_buildId.zip)'
+        description: 'Path ZIP di repo'
         required: true
       build_type:
         description: 'apk-release | apk-debug | web'
@@ -28,39 +29,31 @@ jobs:
 
       - name: Extract Flutter project from ZIP
         run: |
-          ZIP="${{ github.event.inputs.zip_path }}"
-
+          ZIP="${{ inputs.zip_path }}"
           if [ ! -f "$ZIP" ]; then
-            echo "❌ File ZIP tidak ditemukan: $ZIP"
-            ls uploads/ || echo "(folder uploads kosong)"
+            echo "❌ ZIP tidak ditemukan: $ZIP"
+            ls uploads/ 2>/dev/null || echo "(folder uploads kosong)"
             exit 1
           fi
-
           mkdir -p user_project_raw
           unzip -q "$ZIP" -d user_project_raw
-          echo "✅ ZIP diekstrak"
-
-          # Cari Flutter project root (ada pubspec.yaml)
           FLUTTER_ROOT=$(find user_project_raw -name "pubspec.yaml" -maxdepth 5 | head -1 | xargs dirname 2>/dev/null)
-
           if [ -z "$FLUTTER_ROOT" ]; then
-            echo "❌ pubspec.yaml tidak ditemukan! Pastikan project Flutter valid."
+            echo "❌ pubspec.yaml tidak ditemukan!"
             find user_project_raw -maxdepth 4 | head -30
             exit 1
           fi
-
           echo "✅ Flutter root: $FLUTTER_ROOT"
           cp -r "$FLUTTER_ROOT/." user_project/
-          ls user_project/
 
       - name: Setup Java (APK only)
-        if: ${{ github.event.inputs.build_type != 'web' }}
+        if: ${{ inputs.build_type != 'web' }}
         uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
           java-version: '17'
 
-      - name: Setup Flutter (stable)
+      - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
@@ -77,59 +70,55 @@ jobs:
         working-directory: user_project
         run: flutter analyze --no-fatal-warnings || true
 
-      # ── APK RELEASE ───────────────────────────────────────
       - name: Build APK Release
-        if: ${{ github.event.inputs.build_type == 'apk-release' }}
+        if: ${{ inputs.build_type == 'apk-release' }}
         working-directory: user_project
         run: flutter build apk --release --no-tree-shake-icons
 
       - name: Upload APK Release
-        if: ${{ github.event.inputs.build_type == 'apk-release' }}
+        if: ${{ inputs.build_type == 'apk-release' }}
         uses: actions/upload-artifact@v4
         with:
-          name: APK-Release-${{ github.event.inputs.build_id }}
+          name: APK-Release-${{ inputs.build_id }}
           path: user_project/build/app/outputs/flutter-apk/app-release.apk
           retention-days: 3
           if-no-files-found: error
 
-      # ── APK DEBUG ─────────────────────────────────────────
       - name: Build APK Debug
-        if: ${{ github.event.inputs.build_type == 'apk-debug' }}
+        if: ${{ inputs.build_type == 'apk-debug' }}
         working-directory: user_project
         run: flutter build apk --debug
 
       - name: Upload APK Debug
-        if: ${{ github.event.inputs.build_type == 'apk-debug' }}
+        if: ${{ inputs.build_type == 'apk-debug' }}
         uses: actions/upload-artifact@v4
         with:
-          name: APK-Debug-${{ github.event.inputs.build_id }}
+          name: APK-Debug-${{ inputs.build_id }}
           path: user_project/build/app/outputs/flutter-apk/app-debug.apk
           retention-days: 3
           if-no-files-found: error
 
-      # ── WEB ───────────────────────────────────────────────
       - name: Build Web
-        if: ${{ github.event.inputs.build_type == 'web' }}
+        if: ${{ inputs.build_type == 'web' }}
         working-directory: user_project
         run: flutter build web --release --web-renderer canvaskit
 
       - name: Zip web output
-        if: ${{ github.event.inputs.build_type == 'web' }}
+        if: ${{ inputs.build_type == 'web' }}
         working-directory: user_project
         run: |
           cd build/web
           zip -r ../../web-build.zip .
 
       - name: Upload Web Build
-        if: ${{ github.event.inputs.build_type == 'web' }}
+        if: ${{ inputs.build_type == 'web' }}
         uses: actions/upload-artifact@v4
         with:
-          name: Web-Build-${{ github.event.inputs.build_id }}
+          name: Web-Build-${{ inputs.build_id }}
           path: user_project/web-build.zip
           retention-days: 3
           if-no-files-found: error
 
-      # ── CLEANUP ───────────────────────────────────────────
-      - name: Cleanup raw extract
+      - name: Cleanup
         if: always()
         run: rm -rf user_project_raw || true
