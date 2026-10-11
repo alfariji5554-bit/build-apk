@@ -71,9 +71,47 @@ jobs:
       - name: Flutter version
         run: flutter --version
 
+      - name: Generate Android/Web platform files when missing
+        working-directory: user_project
+        run: |
+          if [ ! -d android ]; then
+            flutter create . --platforms=android,web --project-name=web_to_apk
+          fi
+
+      - name: Set generated APK app name
+        working-directory: user_project
+        run: |
+          if [ -f web_to_apk_config.json ] && [ -f android/app/src/main/AndroidManifest.xml ]; then
+            python3 - <<'PYCODE'
+          import json, re
+          from xml.sax.saxutils import escape
+          cfg = json.load(open('web_to_apk_config.json', encoding='utf-8'))
+          path = 'android/app/src/main/AndroidManifest.xml'
+          text = open(path, encoding='utf-8').read()
+          label = escape(str(cfg.get('appName', 'Web App')), {'"': '&quot;'})
+          text = re.sub(r'android:label="[^"]*"', lambda _: 'android:label="' + label + '"', text, count=1)
+          open(path, 'w', encoding='utf-8').write(text)
+          PYCODE
+          fi
+
+      - name: Prepare generated web icon
+        working-directory: user_project
+        run: |
+          if [ -f assets/app_icon.jpg ]; then
+            if ! command -v convert >/dev/null 2>&1; then sudo apt-get update && sudo apt-get install -y imagemagick; fi
+            convert assets/app_icon.jpg assets/app_icon.png
+          fi
+          if [ -f assets/app_icon.png ]; then file assets/app_icon.png; fi
+
       - name: Get dependencies
         working-directory: user_project
         run: flutter pub get
+
+      - name: Generate Android launcher icon when configured
+        if: ${{ inputs.build_type != 'web' }}
+        working-directory: user_project
+        run: |
+          if grep -q '^flutter_launcher_icons:' pubspec.yaml; then dart run flutter_launcher_icons; fi
 
       - name: Analyze (non-fatal)
         working-directory: user_project
