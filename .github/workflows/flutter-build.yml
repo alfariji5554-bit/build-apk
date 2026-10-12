@@ -1,10 +1,14 @@
 name: Flutter Build
+run-name: Build ${{ inputs.build_id }}
 
 on:
   workflow_dispatch:
     inputs:
-      zip_path:
-        description: 'Path ZIP di repo (uploads/userId_buildId.zip)'
+      asset_tag:
+        description: 'Tag GitHub Release yang menyimpan ZIP sumber'
+        required: true
+      asset_name:
+        description: 'Nama asset ZIP sumber di release'
         required: true
       build_type:
         description: 'apk-release | apk-debug | web'
@@ -17,6 +21,9 @@ on:
         description: 'Build ID dari bot'
         required: true
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -27,13 +34,26 @@ jobs:
       - name: Checkout build repo
         uses: actions/checkout@v4
 
+      - name: Download source ZIP from GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ASSET_TAG: ${{ inputs.asset_tag }}
+          ASSET_NAME: ${{ inputs.asset_name }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          RELEASE_JSON=$(curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${GH_REPO}/releases/tags/${ASSET_TAG}")
+          ASSET_ID=$(printf '%s' "$RELEASE_JSON" | jq -r --arg n "$ASSET_NAME" '.assets[] | select(.name == $n) | .id' | head -n1)
+          test -n "$ASSET_ID" -a "$ASSET_ID" != "null" || { echo "Source asset tidak ditemukan: ${ASSET_NAME}"; exit 1; }
+          curl -fL --retry 3 --retry-delay 2 -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/octet-stream" "https://api.github.com/repos/${GH_REPO}/releases/assets/${ASSET_ID}" -o source-project.zip
+          ls -lh source-project.zip
+
       - name: Extract Flutter project from ZIP
         run: |
-          ZIP="${{ inputs.zip_path }}"
+          ZIP=source-project.zip
 
           if [ ! -f "$ZIP" ]; then
-            echo "❌ File ZIP tidak ditemukan: $ZIP"
-            ls uploads/ || echo "(folder uploads kosong)"
+            echo "Source ZIP tidak ditemukan"
             exit 1
           fi
 
