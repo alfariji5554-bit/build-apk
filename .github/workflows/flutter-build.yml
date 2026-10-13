@@ -11,7 +11,7 @@ on:
         description: 'Nama asset ZIP sumber di release'
         required: true
       build_type:
-        description: 'apk-release | apk-debug | web'
+        description: 'apk-release | apk-debug | web | native-release | native-debug'
         required: true
         default: 'apk-release'
       user_id:
@@ -48,32 +48,28 @@ jobs:
           curl -fL --retry 3 --retry-delay 2 -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/octet-stream" "https://api.github.com/repos/${GH_REPO}/releases/assets/${ASSET_ID}" -o source-project.zip
           ls -lh source-project.zip
 
-      - name: Extract Flutter project from ZIP
+      - name: Extract project from ZIP
         run: |
-          ZIP=source-project.zip
-
-          if [ ! -f "$ZIP" ]; then
-            echo "Source ZIP tidak ditemukan"
-            exit 1
-          fi
-
+          set -euo pipefail
           mkdir -p user_project_raw
-          unzip -q "$ZIP" -d user_project_raw
-          echo "✅ ZIP diekstrak"
-
-          # Cari Flutter project root (ada pubspec.yaml)
-          FLUTTER_ROOT=$(find user_project_raw -name "pubspec.yaml" -maxdepth 5 | head -1 | xargs dirname 2>/dev/null)
-
-          if [ -z "$FLUTTER_ROOT" ]; then
-            echo "❌ pubspec.yaml tidak ditemukan! Pastikan project Flutter valid."
-            find user_project_raw -maxdepth 4 | head -30
-            exit 1
+          unzip -q source-project.zip -d user_project_raw
+          if [[ "${{ inputs.build_type }}" == native-* ]]; then
+            ROOT=$(find user_project_raw -name gradlew -type f -maxdepth 7 | head -1 | xargs -r dirname)
+            if [ -z "$ROOT" ] || [ ! -d "$ROOT/app" ]; then
+              echo "Native Android project tidak valid: wajib ada gradlew dan folder app/"
+              exit 1
+            fi
+            mkdir -p native_project
+            cp -r "$ROOT/." native_project/
+            chmod +x native_project/gradlew
+            echo "Native Android root: $ROOT"
+          else
+            ROOT=$(find user_project_raw -name pubspec.yaml -maxdepth 7 | head -1 | xargs -r dirname)
+            if [ -z "$ROOT" ]; then echo "pubspec.yaml tidak ditemukan"; exit 1; fi
+            mkdir -p user_project
+            cp -r "$ROOT/." user_project/
+            echo "Flutter root: $ROOT"
           fi
-
-          echo "✅ Flutter root: $FLUTTER_ROOT"
-          mkdir -p user_project
-          cp -r "$FLUTTER_ROOT/." user_project/
-          ls user_project/
 
       - name: Setup Java (APK only)
         if: ${{ inputs.build_type != 'web' }}
@@ -83,15 +79,18 @@ jobs:
           java-version: '17'
 
       - name: Setup Flutter (stable)
+        if: ${{ !startsWith(inputs.build_type, 'native-') }}
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
           cache: true
 
       - name: Flutter version
+        if: ${{ !startsWith(inputs.build_type, 'native-') }}
         run: flutter --version
 
       - name: Generate Android/Web platform files when missing
+        if: ${{ !startsWith(inputs.build_type, 'native-') }}
         working-directory: user_project
         run: |
           if [ ! -d android ]; then
@@ -99,6 +98,7 @@ jobs:
           fi
 
       - name: Set generated APK app name
+        if: ${{ !startsWith(inputs.build_type, 'native-') }}
         working-directory: user_project
         run: |
           if [ -f web_to_apk_config.json ] && [ -f android/app/src/main/AndroidManifest.xml ]; then
@@ -115,6 +115,7 @@ jobs:
           fi
 
       - name: Prepare generated web icon
+        if: ${{ !startsWith(inputs.build_type, 'native-') }}
         working-directory: user_project
         run: |
           if [ -f assets/app_icon.jpg ]; then
@@ -124,16 +125,18 @@ jobs:
           if [ -f assets/app_icon.png ]; then file assets/app_icon.png; fi
 
       - name: Get dependencies
+        if: ${{ !startsWith(inputs.build_type, 'native-') }}
         working-directory: user_project
         run: flutter pub get
 
       - name: Generate Android launcher icon when configured
-        if: ${{ inputs.build_type != 'web' }}
+        if: ${{ inputs.build_type != 'web' && !startsWith(inputs.build_type, 'native-') }}
         working-directory: user_project
         run: |
           if grep -q '^flutter_launcher_icons:' pubspec.yaml; then dart run flutter_launcher_icons; fi
 
       - name: Analyze (non-fatal)
+        if: ${{ !startsWith(inputs.build_type, 'native-') }}
         working-directory: user_project
         run: flutter analyze --no-fatal-warnings || true
 
@@ -186,6 +189,35 @@ jobs:
         with:
           name: "Web-Build-${{ inputs.build_id }}"
           path: user_project/web-build.zip
+          retention-days: 3
+          if-no-files-found: error
+
+      # ── NATIVE ANDROID ────────────────────────────────────
+      - name: Build Native Release APK
+        if: ${{ inputs.build_type == 'native-release' }}
+        working-directory: native_project
+        run: ./gradlew --no-daemon assembleRelease
+
+      - name: Upload Native Release APK
+        if: ${{ inputs.build_type == 'native-release' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: "Native-Release-${{ inputs.build_id }}"
+          path: native_project/app/build/outputs/apk/release/*.apk
+          retention-days: 3
+          if-no-files-found: error
+
+      - name: Build Native Debug APK
+        if: ${{ inputs.build_type == 'native-debug' }}
+        working-directory: native_project
+        run: ./gradlew --no-daemon assembleDebug
+
+      - name: Upload Native Debug APK
+        if: ${{ inputs.build_type == 'native-debug' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: "Native-Debug-${{ inputs.build_id }}"
+          path: native_project/app/build/outputs/apk/debug/*.apk
           retention-days: 3
           if-no-files-found: error
 
